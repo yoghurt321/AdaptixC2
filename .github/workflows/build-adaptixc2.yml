@@ -58,40 +58,7 @@ jobs:
           if-no-files-found: warn
 
   # ============================================
-  # 构建 Linux 客户端 (C++/Qt6)
-  # ============================================
-  build-client-linux:
-    name: Build Client (Linux)
-    runs-on: ubuntu-24.04   # Qt 6.6+ 支持 DevicePixelRatioChange
-    timeout-minutes: 45
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Qt6 dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            gcc g++ build-essential make cmake libssl-dev \
-            qt6-base-dev qt6-base-private-dev \
-            qt6-websockets-dev qt6-declarative-dev \
-            qt6-svg-dev qt6-tools-dev qt6-tools-dev-tools \
-            libxkbcommon-dev libgl-dev
-
-      - name: Build AdaptixClient for Linux
-        run: make client
-
-      - name: Upload Linux client artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: adaptix-client-linux
-          path: dist/AdaptixClient
-          retention-days: 7
-          if-no-files-found: warn
-
-  # ============================================
-  # 构建 Windows 客户端 (原生编译)
+  # 构建 Windows 客户端 (MSYS2 + MinGW + Qt6)
   # ============================================
   build-client-windows:
     name: Build Client (Windows)
@@ -102,36 +69,48 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Qt6
-        uses: jurplel/install-qt-action@v4
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
         with:
-          version: '6.6.3'
-          host: 'windows'
-          target: 'desktop'
-          arch: 'win64_msvc2022_64'
-          modules: 'qtwebsockets qtsvg qtdeclarative qttools'
+          msystem: MINGW64
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-websockets
+            mingw-w64-x86_64-qt6-svg
+            mingw-w64-x86_64-qt6-declarative
+            mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-openssl
+          update: true
 
-      - name: Install OpenSSL
+      - name: Configure with CMake (MSYS2)
+        shell: msys2 {0}
         run: |
-          choco install openssl -y
-          echo "C:\Program Files\OpenSSL-Win64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Configure CMake
-        run: |
-          mkdir build
+          mkdir -p build
           cd build
-          cmake ../AdaptixClient -DCMAKE_PREFIX_PATH="$env:Qt6_DIR" -DCMAKE_BUILD_TYPE=Release
+          cmake ../AdaptixClient \
+            -G "MinGW Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=/mingw64
 
-      - name: Build
+      - name: Build (MSYS2)
+        shell: msys2 {0}
         run: |
           cd build
-          cmake --build . --config Release --parallel
+          mingw32-make -j$(nproc)
 
       - name: Locate executable
+        shell: bash
         run: |
-          Get-ChildItem -Recurse -Filter "*.exe" | Where-Object { $_.Name -like "AdaptixClient*" } | ForEach-Object {
-            Copy-Item $_.FullName -Destination "$env:GITHUB_WORKSPACE\AdaptixClient.exe"
-          }
+          find . -name "AdaptixClient.exe" -exec cp {} AdaptixClient.exe \;
+          if [ -f AdaptixClient.exe ]; then
+            echo "✅ Found AdaptixClient.exe"
+          else
+            echo "❌ Executable not found"
+            exit 1
+          fi
 
       - name: Upload Windows client artifacts
         uses: actions/upload-artifact@v4
@@ -139,4 +118,4 @@ jobs:
           name: adaptix-client-windows
           path: AdaptixClient.exe
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error
