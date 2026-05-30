@@ -87,15 +87,15 @@ jobs:
     name: Build Client (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
+  
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
+  
       - name: Install complete Qt6 dependencies
         run: |
           sudo apt-get update
-          # 🔧 关键修复：补充安装 'libgl-dev' 和其他缺失的头文件库
+          # 🔧 关键修复：添加 qt6-svg-dev 及其他必要模块
           sudo apt-get install -y \
             gcc \
             g++ \
@@ -107,14 +107,17 @@ jobs:
             qt6-base-private-dev \
             qt6-websockets-dev \
             qt6-declarative-dev \
+            qt6-svg-dev \
+            qt6-tools-dev \
+            qt6-tools-dev-tools \
             libxkbcommon-dev \
             libgl-dev
-
+  
       - name: Build AdaptixClient for Linux
         run: |
           make client
         continue-on-error: false
-
+  
       - name: Package Linux client
         run: |
           mkdir -p artifacts/client-linux
@@ -124,7 +127,7 @@ jobs:
             cp dist/AdaptixClient.exe artifacts/client-linux/
           fi
           echo "Linux client packaged"
-
+  
       - name: Upload Linux client artifacts
         uses: actions/upload-artifact@v4
         with:
