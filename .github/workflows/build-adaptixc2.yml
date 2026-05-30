@@ -59,6 +59,7 @@ jobs:
 
   # ============================================
   # 构建 Windows 客户端 (MSYS2 + MinGW + Qt6)
+  # 并自动部署依赖，打包成可运行程序
   # ============================================
   build-client-windows:
     name: Build Client (Windows)
@@ -101,21 +102,36 @@ jobs:
           cd build
           mingw32-make -j$(nproc)
 
-      - name: Locate executable
-        shell: bash
+      - name: Deploy Qt dependencies (windeployqt)
+        shell: msys2 {0}
         run: |
-          find . -name "AdaptixClient.exe" -exec cp {} AdaptixClient.exe \;
-          if [ -f AdaptixClient.exe ]; then
-            echo "✅ Found AdaptixClient.exe"
+          # 找到生成的 AdaptixClient.exe
+          if [ -f build/AdaptixClient.exe ]; then
+            EXE_PATH="build/AdaptixClient.exe"
+          elif [ -f build/Release/AdaptixClient.exe ]; then
+            EXE_PATH="build/Release/AdaptixClient.exe"
           else
-            echo "❌ Executable not found"
+            echo "❌ Cannot find AdaptixClient.exe"
             exit 1
           fi
 
-      - name: Upload Windows client artifacts
+          # 创建部署目录
+          mkdir -p deploy
+          cp "$EXE_PATH" deploy/
+
+          # 运行 windeployqt 自动复制所有依赖（包括 QML 文件）
+          /mingw64/bin/windeployqt --release --qmldir /mingw64/qml deploy/AdaptixClient.exe
+
+          echo "✅ Qt dependencies deployed to deploy/"
+
+      - name: Package deployment as zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path deploy/* -DestinationPath adaptix-client-windows.zip
+
+      - name: Upload Windows client artifact (portable)
         uses: actions/upload-artifact@v4
         with:
           name: adaptix-client-windows
-          path: AdaptixClient.exe
+          path: adaptix-client-windows.zip
           retention-days: 7
-          if-no-files-found: error
