@@ -85,48 +85,32 @@ jobs:
   # ============================================
   build-client-linux:
     name: Build Client (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # 关键：使用 Ubuntu 24.04 以获得 Qt 6.6+
     timeout-minutes: 45
   
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
   
-      - name: Install complete Qt6 dependencies
+      - name: Install Qt6 dependencies
         run: |
           sudo apt-get update
-          # 🔧 关键修复：添加 qt6-svg-dev 及其他必要模块
           sudo apt-get install -y \
-            gcc \
-            g++ \
-            build-essential \
-            make \
-            cmake \
-            libssl-dev \
-            qt6-base-dev \
-            qt6-base-private-dev \
-            qt6-websockets-dev \
-            qt6-declarative-dev \
-            qt6-svg-dev \
-            qt6-tools-dev \
-            qt6-tools-dev-tools \
-            libxkbcommon-dev \
-            libgl-dev
+            gcc g++ build-essential make cmake libssl-dev \
+            qt6-base-dev qt6-base-private-dev \
+            qt6-websockets-dev qt6-declarative-dev \
+            qt6-svg-dev qt6-tools-dev qt6-tools-dev-tools \
+            libxkbcommon-dev libgl-dev
   
       - name: Build AdaptixClient for Linux
-        run: |
-          make client
-        continue-on-error: false
+        run: make client
   
       - name: Package Linux client
         run: |
           mkdir -p artifacts/client-linux
           if [ -f dist/AdaptixClient ]; then
             cp dist/AdaptixClient artifacts/client-linux/
-          elif [ -f dist/AdaptixClient.exe ]; then
-            cp dist/AdaptixClient.exe artifacts/client-linux/
           fi
-          echo "Linux client packaged"
   
       - name: Upload Linux client artifacts
         uses: actions/upload-artifact@v4
