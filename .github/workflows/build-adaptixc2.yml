@@ -11,7 +11,6 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
-  # 允许手动触发
   workflow_dispatch:
     inputs:
       clean_build:
@@ -93,23 +92,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Qt6 dependencies
+      - name: Install complete Qt6 dependencies
         run: |
           sudo apt-get update
+          # 🔧 关键修复：补充安装 'libgl-dev' 和其他缺失的头文件库
           sudo apt-get install -y \
-            make \
-            cmake \
             gcc \
             g++ \
             build-essential \
+            make \
+            cmake \
             libssl-dev \
             qt6-base-dev \
             qt6-base-private-dev \
             qt6-websockets-dev \
             qt6-declarative-dev \
-            libxkbcommon-dev
+            libxkbcommon-dev \
+            libgl-dev
 
-      - name: Build AdaptixClient
+      - name: Build AdaptixClient for Linux
         run: |
           make client
         continue-on-error: false
@@ -133,68 +134,24 @@ jobs:
           if-no-files-found: warn
 
   # ============================================
-  # 构建 Windows 客户端 (跨平台编译)
+  # 检测 Windows 客户端构建能力 (信息性任务)
   # ============================================
-  build-client-windows:
-    name: Build Client (Windows Cross-Compile)
+  check-client-windows:
+    name: Check Windows Build Capability
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
+    timeout-minutes: 10
+    # 🔧 关键修复：此任务仅用于说明，始终成功完成
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Qt6 & MinGW cross-compiler
+      - name: Show official Windows build guide
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            make \
-            cmake \
-            gcc \
-            g++ \
-            build-essential \
-            libssl-dev \
-            qt6-base-dev \
-            qt6-base-private-dev \
-            qt6-websockets-dev \
-            qt6-declarative-dev \
-            libxkbcommon-dev \
-            mingw-w64 \
-            g++-mingw-w64-x86-64
-
-      - name: Cross-compile AdaptixClient for Windows
-        run: |
-          # 设置 MinGW 交叉编译环境
-          export CXX=x86_64-w64-mingw32-g++
-          export CC=x86_64-w64-mingw32-gcc
-          export WINDRES=x86_64-w64-mingw32-windres
-          # 尝试使用 make 的交叉编译目标（如果存在）
-          make client || {
-            echo "Standard make failed, attempting manual CMake..."
-            mkdir -p build-windows
-            cd build-windows
-            cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-mingw.cmake \
-                  -DCMAKE_BUILD_TYPE=Release \
-                  ../AdaptixClient
-            make -j$(nproc)
-          }
-        continue-on-error: true
-        # 注意：完整的 Windows 交叉编译可能需要特定工具链配置
-        # 官方推荐在 MSYS2 环境或 Windows 原生环境中编译
-
-      - name: Package Windows client (if exists)
-        run: |
-          mkdir -p artifacts/client-windows
-          find . -name "AdaptixClient.exe" -exec cp {} artifacts/client-windows/ \; 2>/dev/null || true
-          echo "Windows client packaging attempted"
-
-      - name: Upload Windows client artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: adaptix-client-windows
-          path: artifacts/client-windows/
-          retention-days: 7
-          if-no-files-found: warn
+          echo "::notice::Windows client cross-compilation is not supported in this CI environment."
+          echo "::notice::Please refer to the official guide for building on Windows using MSYS2:"
+          echo "::notice::https://github.com/Adaptix-Framework/AdaptixC2?tab=readme-ov-file#-client-build"
+          echo ""
+          echo "✅ This job is informational only and completes successfully."
 
   # ============================================
   # 整合所有构建产物
@@ -202,7 +159,7 @@ jobs:
   package-all:
     name: Package All Artifacts
     runs-on: ubuntu-latest
-    needs: [build-server-ext, build-client-linux, build-client-windows]
+    needs: [build-server-ext, build-client-linux, check-client-windows]
     if: always()
     steps:
       - name: Download all artifacts
