@@ -12,12 +12,6 @@ on:
       - '**.md'
       - 'docs/**'
   workflow_dispatch:
-    inputs:
-      clean_build:
-        description: '是否清理缓存全新编译'
-        required: false
-        default: 'false'
-        type: boolean
 
 jobs:
   # ============================================
@@ -40,7 +34,6 @@ jobs:
 
       - name: Setup Go environment
         run: |
-          # 设置 GOPROXY 加速 Go 模块下载
           go env -w GO111MODULE=on
           go env -w GOPROXY=https://goproxy.cn,direct
 
@@ -48,35 +41,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            make \
-            cmake \
-            gcc \
-            g++ \
-            mingw-w64 \
-            g++-mingw-w64 \
-            libssl-dev
+            make cmake gcc g++ mingw-w64 g++-mingw-w64 libssl-dev
 
       - name: Build server
-        run: |
-          make server
-        continue-on-error: false
+        run: make server
 
       - name: Build extenders
-        run: |
-          make extenders
-        continue-on-error: false
-
-      - name: List build artifacts
-        run: |
-          ls -la dist/ || echo "dist directory not found"
-          mkdir -p artifacts/server
-          cp -r dist/* artifacts/server/ 2>/dev/null || true
+        run: make extenders
 
       - name: Upload server artifacts
         uses: actions/upload-artifact@v4
         with:
           name: adaptix-server-linux
-          path: artifacts/server/
+          path: dist/
           retention-days: 7
           if-no-files-found: warn
 
@@ -85,13 +62,13 @@ jobs:
   # ============================================
   build-client-linux:
     name: Build Client (Linux)
-    runs-on: ubuntu-24.04   # 关键：使用 Ubuntu 24.04 以获得 Qt 6.6+
+    runs-on: ubuntu-24.04   # Qt 6.6+ 支持 DevicePixelRatioChange
     timeout-minutes: 45
-  
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-  
+
       - name: Install Qt6 dependencies
         run: |
           sudo apt-get update
@@ -101,69 +78,65 @@ jobs:
             qt6-websockets-dev qt6-declarative-dev \
             qt6-svg-dev qt6-tools-dev qt6-tools-dev-tools \
             libxkbcommon-dev libgl-dev
-  
+
       - name: Build AdaptixClient for Linux
         run: make client
-  
-      - name: Package Linux client
-        run: |
-          mkdir -p artifacts/client-linux
-          if [ -f dist/AdaptixClient ]; then
-            cp dist/AdaptixClient artifacts/client-linux/
-          fi
-  
+
       - name: Upload Linux client artifacts
         uses: actions/upload-artifact@v4
         with:
           name: adaptix-client-linux
-          path: artifacts/client-linux/
+          path: dist/AdaptixClient
           retention-days: 7
           if-no-files-found: warn
 
   # ============================================
-  # 检测 Windows 客户端构建能力 (信息性任务)
+  # 构建 Windows 客户端 (原生编译)
   # ============================================
-  check-client-windows:
-    name: Check Windows Build Capability
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # 🔧 关键修复：此任务仅用于说明，始终成功完成
+  build-client-windows:
+    name: Build Client (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Show official Windows build guide
-        run: |
-          echo "::notice::Windows client cross-compilation is not supported in this CI environment."
-          echo "::notice::Please refer to the official guide for building on Windows using MSYS2:"
-          echo "::notice::https://github.com/Adaptix-Framework/AdaptixC2?tab=readme-ov-file#-client-build"
-          echo ""
-          echo "✅ This job is informational only and completes successfully."
-
-  # ============================================
-  # 整合所有构建产物
-  # ============================================
-  package-all:
-    name: Package All Artifacts
-    runs-on: ubuntu-latest
-    needs: [build-server-ext, build-client-linux, check-client-windows]
-    if: always()
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - name: Install Qt6
+        uses: jurplel/install-qt-action@v4
         with:
-          path: all-artifacts
+          version: '6.6.3'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtwebsockets qtsvg qtdeclarative qttools'
 
-      - name: Create final archive
+      - name: Install OpenSSL
         run: |
-          mkdir -p final-release
-          cp -r all-artifacts/*/* final-release/ 2>/dev/null || true
-          echo "Final artifacts organized in final-release/"
+          choco install openssl -y
+          echo "C:\Program Files\OpenSSL-Win64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Upload final artifacts
+      - name: Configure CMake
+        run: |
+          mkdir build
+          cd build
+          cmake ../AdaptixClient -DCMAKE_PREFIX_PATH="$env:Qt6_DIR" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cd build
+          cmake --build . --config Release --parallel
+
+      - name: Locate executable
+        run: |
+          Get-ChildItem -Recurse -Filter "*.exe" | Where-Object { $_.Name -like "AdaptixClient*" } | ForEach-Object {
+            Copy-Item $_.FullName -Destination "$env:GITHUB_WORKSPACE\AdaptixClient.exe"
+          }
+
+      - name: Upload Windows client artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: adaptixc2-complete-build
-          path: final-release/
+          name: adaptix-client-windows
+          path: AdaptixClient.exe
           retention-days: 7
           if-no-files-found: warn
