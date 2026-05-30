@@ -1,0 +1,225 @@
+name: Build AdaptixC2
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  pull_request:
+    branches: [ "main", "dev" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  # 允许手动触发
+  workflow_dispatch:
+    inputs:
+      clean_build:
+        description: '是否清理缓存全新编译'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  # ============================================
+  # 构建服务端与扩展器 (Go)
+  # ============================================
+  build-server-ext:
+    name: Build Server & Extenders
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Setup Go environment
+        run: |
+          # 设置 GOPROXY 加速 Go 模块下载
+          go env -w GO111MODULE=on
+          go env -w GOPROXY=https://goproxy.cn,direct
+
+      - name: Install dependencies (MinGW & build tools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            make \
+            cmake \
+            gcc \
+            g++ \
+            mingw-w64 \
+            g++-mingw-w64 \
+            libssl-dev
+
+      - name: Build server
+        run: |
+          make server
+        continue-on-error: false
+
+      - name: Build extenders
+        run: |
+          make extenders
+        continue-on-error: false
+
+      - name: List build artifacts
+        run: |
+          ls -la dist/ || echo "dist directory not found"
+          mkdir -p artifacts/server
+          cp -r dist/* artifacts/server/ 2>/dev/null || true
+
+      - name: Upload server artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptix-server-linux
+          path: artifacts/server/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ============================================
+  # 构建 Linux 客户端 (C++/Qt6)
+  # ============================================
+  build-client-linux:
+    name: Build Client (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Qt6 dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            make \
+            cmake \
+            gcc \
+            g++ \
+            build-essential \
+            libssl-dev \
+            qt6-base-dev \
+            qt6-base-private-dev \
+            qt6-websockets-dev \
+            qt6-declarative-dev \
+            libxkbcommon-dev
+
+      - name: Build AdaptixClient
+        run: |
+          make client
+        continue-on-error: false
+
+      - name: Package Linux client
+        run: |
+          mkdir -p artifacts/client-linux
+          if [ -f dist/AdaptixClient ]; then
+            cp dist/AdaptixClient artifacts/client-linux/
+          elif [ -f dist/AdaptixClient.exe ]; then
+            cp dist/AdaptixClient.exe artifacts/client-linux/
+          fi
+          echo "Linux client packaged"
+
+      - name: Upload Linux client artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptix-client-linux
+          path: artifacts/client-linux/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ============================================
+  # 构建 Windows 客户端 (跨平台编译)
+  # ============================================
+  build-client-windows:
+    name: Build Client (Windows Cross-Compile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Qt6 & MinGW cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            make \
+            cmake \
+            gcc \
+            g++ \
+            build-essential \
+            libssl-dev \
+            qt6-base-dev \
+            qt6-base-private-dev \
+            qt6-websockets-dev \
+            qt6-declarative-dev \
+            libxkbcommon-dev \
+            mingw-w64 \
+            g++-mingw-w64-x86-64
+
+      - name: Cross-compile AdaptixClient for Windows
+        run: |
+          # 设置 MinGW 交叉编译环境
+          export CXX=x86_64-w64-mingw32-g++
+          export CC=x86_64-w64-mingw32-gcc
+          export WINDRES=x86_64-w64-mingw32-windres
+          # 尝试使用 make 的交叉编译目标（如果存在）
+          make client || {
+            echo "Standard make failed, attempting manual CMake..."
+            mkdir -p build-windows
+            cd build-windows
+            cmake -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-mingw.cmake \
+                  -DCMAKE_BUILD_TYPE=Release \
+                  ../AdaptixClient
+            make -j$(nproc)
+          }
+        continue-on-error: true
+        # 注意：完整的 Windows 交叉编译可能需要特定工具链配置
+        # 官方推荐在 MSYS2 环境或 Windows 原生环境中编译
+
+      - name: Package Windows client (if exists)
+        run: |
+          mkdir -p artifacts/client-windows
+          find . -name "AdaptixClient.exe" -exec cp {} artifacts/client-windows/ \; 2>/dev/null || true
+          echo "Windows client packaging attempted"
+
+      - name: Upload Windows client artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptix-client-windows
+          path: artifacts/client-windows/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ============================================
+  # 整合所有构建产物
+  # ============================================
+  package-all:
+    name: Package All Artifacts
+    runs-on: ubuntu-latest
+    needs: [build-server-ext, build-client-linux, build-client-windows]
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Create final archive
+        run: |
+          mkdir -p final-release
+          cp -r all-artifacts/*/* final-release/ 2>/dev/null || true
+          echo "Final artifacts organized in final-release/"
+
+      - name: Upload final artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptixc2-complete-build
+          path: final-release/
+          retention-days: 7
+          if-no-files-found: warn
