@@ -59,7 +59,7 @@ jobs:
           cd build
           mingw32-make -j$(nproc)
 
-      - name: Deploy Qt dependencies (windeployqt)
+      - name: Deploy Qt dependencies (manual QML copy + windeployqt)
         shell: msys2 {0}
         run: |
           export PATH=/mingw64/bin:$PATH
@@ -77,23 +77,26 @@ jobs:
           mkdir -p deploy
           cp "$EXE_PATH" deploy/
 
-          # 自动探测 QML 目录（MSYS2 Qt6 常见路径）
-          QML_DIR=""
-          if [ -d "/mingw64/lib/qt6/qml" ]; then
-            QML_DIR="/mingw64/lib/qt6/qml"
-          elif [ -d "/mingw64/share/qt6/qml" ]; then
-            QML_DIR="/mingw64/share/qt6/qml"
+          # 手动复制整个 QML 目录（避免 qmlimportscanner 启动失败）
+          QML_SRC=""
+          if [ -d "/mingw64/share/qt6/qml" ]; then
+            QML_SRC="/mingw64/share/qt6/qml"
+          elif [ -d "/mingw64/lib/qt6/qml" ]; then
+            QML_SRC="/mingw64/lib/qt6/qml"
           fi
 
-          if [ -n "$QML_DIR" ]; then
-            echo "✅ Using QML directory: $QML_DIR"
-            windeployqt --release --qmldir "$QML_DIR" deploy/AdaptixClient.exe
+          if [ -n "$QML_SRC" ]; then
+            echo "✅ Copying entire QML directory from $QML_SRC"
+            cp -r "$QML_SRC" deploy/qml
           else
-            echo "⚠️ QML directory not found, deploying without QML imports (may fail at runtime)"
-            windeployqt --release deploy/AdaptixClient.exe
+            echo "⚠️ QML directory not found, app may lack QML imports"
           fi
 
-          echo "✅ Qt dependencies deployed to deploy/"
+          # 使用 windeployqt 处理其余依赖（跳过 QML 扫描）
+          echo "Running windeployqt --no-qmlimportscan ..."
+          windeployqt --release --no-qmlimportscan deploy/AdaptixClient.exe
+
+          echo "✅ Deployment completed"
 
       - name: Package deployment as zip
         shell: pwsh
