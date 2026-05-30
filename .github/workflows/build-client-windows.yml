@@ -1,0 +1,108 @@
+name: Build AdaptixC2 Windows Client
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'server/**'
+      - 'extenders/**'
+  pull_request:
+    branches: [ "main", "dev" ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'server/**'
+      - 'extenders/**'
+  workflow_dispatch:
+
+jobs:
+  build-client-windows:
+    name: Build Client (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-websockets
+            mingw-w64-x86_64-qt6-svg
+            mingw-w64-x86_64-qt6-declarative
+            mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-openssl
+          update: true
+
+      - name: Configure with CMake (MSYS2)
+        shell: msys2 {0}
+        run: |
+          mkdir -p build
+          cd build
+          cmake ../AdaptixClient \
+            -G "MinGW Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=/mingw64
+
+      - name: Build (MSYS2)
+        shell: msys2 {0}
+        run: |
+          cd build
+          mingw32-make -j$(nproc)
+
+      - name: Deploy Qt dependencies (windeployqt)
+        shell: msys2 {0}
+        run: |
+          export PATH=/mingw64/bin:$PATH
+
+          # 找到生成的 AdaptixClient.exe
+          if [ -f build/AdaptixClient.exe ]; then
+            EXE_PATH="build/AdaptixClient.exe"
+          elif [ -f build/Release/AdaptixClient.exe ]; then
+            EXE_PATH="build/Release/AdaptixClient.exe"
+          else
+            echo "❌ Cannot find AdaptixClient.exe"
+            exit 1
+          fi
+
+          mkdir -p deploy
+          cp "$EXE_PATH" deploy/
+
+          # 自动探测 QML 目录（MSYS2 Qt6 常见路径）
+          QML_DIR=""
+          if [ -d "/mingw64/lib/qt6/qml" ]; then
+            QML_DIR="/mingw64/lib/qt6/qml"
+          elif [ -d "/mingw64/share/qt6/qml" ]; then
+            QML_DIR="/mingw64/share/qt6/qml"
+          fi
+
+          if [ -n "$QML_DIR" ]; then
+            echo "✅ Using QML directory: $QML_DIR"
+            windeployqt --release --qmldir "$QML_DIR" deploy/AdaptixClient.exe
+          else
+            echo "⚠️ QML directory not found, deploying without QML imports (may fail at runtime)"
+            windeployqt --release deploy/AdaptixClient.exe
+          fi
+
+          echo "✅ Qt dependencies deployed to deploy/"
+
+      - name: Package deployment as zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path deploy/* -DestinationPath adaptix-client-windows.zip
+
+      - name: Upload Windows client artifact (portable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptix-client-windows
+          path: adaptix-client-windows.zip
+          retention-days: 7
